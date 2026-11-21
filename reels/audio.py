@@ -19,7 +19,8 @@ def _env(n, attack, release):
 def _note(freq, dur, decay=4.0, harmonics=((1, 1.0), (2, 0.35), (3, 0.12))):
     t = np.arange(int(dur * SR)) / SR
     s = sum(a * np.sin(2 * np.pi * freq * h * t) for h, a in harmonics)
-    return s * np.exp(-decay * t)
+    attack = np.minimum(1.0, t / 0.008)  # 8 ms ramp so a note never starts with a click
+    return s * np.exp(-decay * t) * attack
 
 
 def _add(buf, sig, at):
@@ -77,7 +78,7 @@ def quiz_track(path, duration, ticks, reveal_at, seed=0, music_on=True):
 
 
 def stoic_track(path, duration, seed=0):
-    """Slow cinematic drone: low minor chord swelling in, soft filtered air, sparse piano notes."""
+    """Fallback when no library track is available: a clean slow pad (no noise layer) with sparse soft notes."""
     rnd = np.random.default_rng(seed)
     n = int(duration * SR)
     t = np.arange(n) / SR
@@ -93,7 +94,6 @@ def stoic_track(path, duration, seed=0):
         # same chord two octaves up: phone speakers cannot reproduce the low layer on their own
         pad_l += (0.34 / (k + 1)) * lfo * np.sin(2 * np.pi * f * 4 * t + 1.1)
         pad_r += (0.34 / (k + 1)) * lfo * np.sin(2 * np.pi * f * 4.01 * t + 0.2)
-    air = np.convolve(rnd.standard_normal(n), np.ones(60) / 60, mode="same") * 0.35
     env = _env(n, 2.5, 1.5)
     piano = np.zeros(n)
     scale = [root * 8 * r for r in (1, 1.189, 1.335, 1.498, 1.782, 2)]
@@ -102,18 +102,5 @@ def stoic_track(path, duration, seed=0):
         _add(piano, 0.30 * _note(rnd.choice(scale), 3.0, decay=1.4), at)
         at += rnd.uniform(1.6, 2.6)
     piano = _echo(piano, delay=0.42, fb=0.45, taps=5)
-    return _write(path, (pad_l + air) * env + piano, (pad_r + np.roll(air, 300)) * env + np.roll(piano, 200))
+    return _write(path, pad_l * env + piano, pad_r * env + np.roll(piano, 200))
 
-
-def quiet_track(path, duration, seed=0):
-    """Barely audible air, used as the video's own sound when an Instagram library track carries the music."""
-    rnd = np.random.default_rng(seed)
-    n = int(duration * SR)
-    air = np.convolve(rnd.standard_normal(n), np.ones(80) / 80, mode="same")
-    st = np.stack([air, np.roll(air, 300)], axis=1) * 0.004 / max(1e-9, np.abs(air).max())
-    with wave.open(path, "wb") as w:
-        w.setnchannels(2)
-        w.setsampwidth(2)
-        w.setframerate(SR)
-        w.writeframes((st * 32767).astype("<i2").tobytes())
-    return path

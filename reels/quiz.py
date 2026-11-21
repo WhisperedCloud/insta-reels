@@ -17,7 +17,7 @@ from PIL import Image, ImageDraw
 from audio import quiz_track
 from common import FFMPEG, H, W, clean_hashtags, download, font, gemini_json, load_used, pixabay_search, plain
 from places import PLACES
-from render import canvas, compose, fit_lines, save, shadow_text, swap_audio
+from render import canvas, compose, fit_lines, music_bed, save, shadow_text
 
 DURATION = 12.0
 COUNT_START, REVEAL = 1.5, 6.5
@@ -175,7 +175,12 @@ def _grid(img, options, correct=None):
         d.text((x + 96, cy), lines[0], font=f, fill=fg, anchor="lm")
 
 
-def build(handle: str, work: str, dry_run: bool):
+MUSIC = {"queries": ["feel good", "upbeat travel", "happy acoustic", "chill vibes", "summer"],
+         "prefer": ["good", "explore", "vibe", "sunny", "way to go", "fly", "enjoy", "little things", "best day"],
+         "avoid": ["piano", "peace", "om", "hymn", "feat."]}
+
+
+def build(handle: str, work: str, dry_run: bool, music=None):
     used = load_used("quiz")
     (answer, _q, _t, region), clip, clip_path = pick_place(used, work)
     text = quiz_text(answer, region)
@@ -241,15 +246,14 @@ def build(handle: str, work: str, dry_run: bool):
     ]
     ticks = [COUNT_START + k for k in range(5)]
     seed = random.randint(0, 10_000)
-    audio = quiz_track(p("audio.wav"), DURATION, ticks, REVEAL, seed=seed)
+    if music:   # upbeat track from Instagram's library under the countdown ticks and reveal chime
+        sfx = quiz_track(p("sfx.wav"), DURATION, ticks, REVEAL, seed=seed, music_on=False)
+        audio = music_bed(music["path"], p("audio.wav"), DURATION, music.get("seconds", 0), gain_db=-5,
+                          overlay_wav=sfx, overlay_db=-6)
+    else:       # built-in fallback
+        audio = quiz_track(p("audio.wav"), DURATION, ticks, REVEAL, seed=seed)
     out = compose(clip_path, overlays, audio, p("reel.mp4"), DURATION, grade="eq=saturation=1.12:contrast=1.04",
                   window=(WIN_X, WIN_Y, WIN_W, WIN_H, p("mask.png")))
-    # second cut with only the countdown ticks + reveal chime, for when Instagram's music plays underneath
-    sfx = swap_audio(out, quiz_track(p("sfx.wav"), DURATION, ticks, REVEAL, seed=seed, music_on=False), p("reel_sfx.mp4"))
-    music = {"video": sfx, "duration": DURATION, "audio_volume": 70, "video_volume": 100,
-             "queries": ["feel good", "upbeat travel", "happy acoustic", "chill vibes", "summer"],
-             "prefer": ["good", "explore", "vibe", "sunny", "way to go", "fly", "enjoy", "little things", "best day"],
-             "avoid": ["piano", "peace", "om", "hymn"]}
 
     # generic tags only: a place hashtag would give the answer away in the caption
     tags = clean_hashtags([], ["GuessThePlace", "GeographyQuiz", "TravelQuiz", "Geography", "Travel", "Quiz", "WhereIsThis"], 7)
@@ -258,5 +262,5 @@ def build(handle: str, work: str, dry_run: bool):
                "Comment your answer before the reveal, then send this to the friend who thinks they know geography.\n"
                f"{'Follow @' + handle + ' for a new place every day.' if handle else 'Follow for a new place every day.'}\n\n"
                f"{' '.join(tags)}")
-    return {"video": out, "caption": caption, "thumb_ms": 3000, "music": music, "used": [clip["id"], f"place:{answer}"],
+    return {"video": out, "caption": caption, "thumb_ms": 3000, "used": [clip["id"], f"place:{answer}"],
             "summary": f"{answer} | options {options} | fact: {text['fact']}"}

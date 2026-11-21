@@ -117,12 +117,22 @@ def compose(clip, overlays, audio, out, duration, grade="", window=None):
     return out
 
 
-def swap_audio(video, wav, out, normalise=True):
-    """Same picture, different soundtrack (no re-encode of the video)."""
-    af = ["-af", "loudnorm=I=-16:TP=-1.5:LRA=11,aresample=44100"] if normalise else ["-ar", "44100"]
-    ff(["-i", video, "-i", wav, "-map", "0:v", "-map", "1:a", "-c:v", "copy", *af, "-c:a", "aac", "-b:a", "192k",
-        "-ac", "2", "-shortest", "-movflags", "+faststart", out])
-    return out
+def music_bed(track, out_wav, duration, seconds=0.0, gain_db=0.0, overlay_wav=None, overlay_db=0.0):
+    """Cut `duration` seconds out of a downloaded music track (starting a little way in, past any quiet intro),
+    with soft fades, optionally mixing a sound-effects wav on top (the quiz ticks). Returns a 44.1 kHz wav."""
+    import random
+    latest = max(2.0, min(40.0, seconds - duration - 8)) if seconds else 6.0
+    start = random.uniform(2.0, latest) if latest > 2.0 else 0.0
+    bed = (f"[0:a]atrim=start={start:.2f}:duration={duration:.2f},asetpts=PTS-STARTPTS,"
+           f"afade=t=in:st=0:d=0.5,afade=t=out:st={duration - 0.9:.2f}:d=0.9,volume={gain_db}dB,"
+           f"aresample=44100,aformat=channel_layouts=stereo")
+    if overlay_wav:
+        ff(["-i", track, "-i", overlay_wav, "-filter_complex",
+            f"{bed}[m];[1:a]volume={overlay_db}dB,aresample=44100,aformat=channel_layouts=stereo[s];"
+            f"[m][s]amix=inputs=2:normalize=0:duration=first[a]", "-map", "[a]", "-t", f"{duration:.2f}", out_wav])
+    else:
+        ff(["-i", track, "-filter_complex", f"{bed}[a]", "-map", "[a]", "-t", f"{duration:.2f}", out_wav])
+    return out_wav
 
 
 def cleanup(paths):

@@ -72,7 +72,11 @@ def main(acct: str) -> int:
             kw = {}
             if acct == "stoic" and claimed:  # India-evening slot speaks Thanglish, US-evening slot English
                 kw["variant"] = slots.VARIANTS.get(claimed[0][-5:])
+            if (os.environ.get("IG_MUSIC") or "on") != "off":  # library track, mixed into the video itself
+                kw["music"] = instagram.fetch_music(token, handle, os.path.join(work, "music.m4a"),
+                                                    fmt.MUSIC["queries"], 25, fmt.MUSIC["prefer"], fmt.MUSIC["avoid"])
             r = fmt.build(handle, work, dry, **kw)
+            soundtrack = f"{kw['music']['title']} — {kw['music']['artist']}" if kw.get("music") else "built-in soundtrack"
             expected = r.get("duration", getattr(fmt, "DURATION", 12.0))
             ok, report = qc.check(r["video"], expected)
             print(f"   🔍 QC: {'✅ PASS' if ok else '❌ FAIL'} — {report}")
@@ -84,14 +88,12 @@ def main(acct: str) -> int:
             with open(os.path.join(OUT_DIR, f"{acct}_{n}.txt"), "w") as f:
                 f.write(r["caption"] + "\n")
             if dry:
-                print(f"   💾 saved {OUT_DIR}/{acct}_{n}.mp4 (not posted)")
+                print(f"   💾 saved {OUT_DIR}/{acct}_{n}.mp4 (not posted)  (music: {soundtrack})")
                 return 0
             if slot:
                 wait_until(slot[1])
-            music = r.get("music") if (os.environ.get("IG_MUSIC") or "on") != "off" else None
-            res = instagram.publish_reel(token, r["video"], r["caption"], r.get("thumb_ms", 3000), handle, music)
-            print(f"   ✅ Posted: {res.get('permalink') or res['id']}"
-                  f"  (music: {res.get('music') or 'built-in soundtrack'})")
+            res = instagram.publish_reel(token, r["video"], r["caption"], r.get("thumb_ms", 3000), handle)
+            print(f"   ✅ Posted: {res.get('permalink') or res['id']}  (music: {soundtrack})")
             mark_used(acct, *r["used"])
             if claimed:
                 slots.record(acct, claimed[0], res.get("permalink", ""))

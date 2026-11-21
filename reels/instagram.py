@@ -6,10 +6,9 @@
                   and is refreshed on every run.
 
 Flow: create a REELS container (resumable upload) -> send the file -> wait for processing -> publish.
-With Facebook Login the Reel is first tried with a track from Instagram's library; if anything about that
-fails, the same Reel is posted with its own built-in soundtrack instead, so a post is never lost.
+With Facebook Login a track from Instagram's music library is downloaded before rendering and mixed into the
+video (see fetch_music); if that is not possible the Reel uses its own built-in soundtrack.
 """
-import json
 import os
 import random
 import time
@@ -71,11 +70,20 @@ def refresh_token(token: str):
     return None
 
 
-def find_music(token: str, uid: str, queries, min_ms: int, prefer=(), avoid=()):
-    """A track from Instagram's library (Meta's royalty-free Sound Collection is what the search returns)
-    matching one of `queries` and long enough for the Reel. Titles containing a `prefer` word are chosen
-    first; titles containing an `avoid` word are skipped."""
-    if not _fb(token):
+def fetch_music(token, handle, out_path, queries, min_seconds, prefer=(), avoid=()):
+    """Download a track from Instagram's music library to `out_path` so it can be mixed into the video.
+
+    Why mix it in ourselves: attaching a track at publish time (audio_configuration) is accepted by the API
+    but the published Reel then plays without it, so the music must already be inside the file.
+    The search returns Meta's royalty-free Sound Collection tracks, which may be used in videos shared on
+    Instagram and Facebook. Returns {"path", "title", "artist", "seconds"} or None (caller falls back to
+    the built-in soundtrack)."""
+    if not token or not _fb(token):
+        return None
+    try:
+        uid = account(token, handle)["user_id"]
+    except Exception as e:
+        print(f"   ℹ️ Instagram music skipped: {str(e)[:160]}")
         return None
     qs = list(queries)
     random.shuffle(qs)
@@ -86,27 +94,38 @@ def find_music(token: str, uid: str, queries, min_ms: int, prefer=(), avoid=()):
                 "audio_type": "music", "user_id": uid, "search_query": q, "access_token": token}))
         except Exception as e:
             print(f"   ℹ️ Instagram music search '{q}' failed: {str(e)[:200]}")
-            return None  # not available for this app/account -> don't keep trying
+            return None
         for a in r.get("audio") or r.get("data") or []:  # the API answers with "audio", the docs say "data"
             title = str(a.get("title", "")).lower()
-            if a.get("audio_id") and a["audio_id"] not in seen and (a.get("duration_in_ms") or 0) >= min_ms \
+            if a.get("audio_id") and a.get("download_url") and a["audio_id"] not in seen \
+                    and (a.get("duration_in_ms") or 0) >= (min_seconds + 30) * 1000 \
                     and not any(w in title for w in avoid):
                 seen.add(a["audio_id"])
                 pool.append(a)
-    if not pool:
-        print("   ℹ️ Instagram music: no suitable track found")
-        return None
     liked = [a for a in pool if any(w in str(a.get("title", "")).lower() for w in prefer)]
-    pick = random.choice(liked or pool)
-    print(f"   🎵 Instagram music: {pick.get('title')} — {pick.get('display_artist')}")
-    return pick
+    random.shuffle(liked)
+    random.shuffle(pool)
+    for pick in (liked + pool)[:4]:  # try a few in case one download fails
+        try:
+            with requests.get(pick["download_url"], stream=True, timeout=90,
+                              headers={"User-Agent": "Mozilla/5.0 (reels-bot)"}) as resp:
+                resp.raise_for_status()
+                with open(out_path, "wb") as f:
+                    for chunk in resp.iter_content(1 << 18):
+                        f.write(chunk)
+            if os.path.getsize(out_path) > 50_000:
+                print(f"   🎵 Instagram music: {pick.get('title')} — {pick.get('display_artist')}")
+                return {"path": out_path, "title": pick.get("title", ""), "artist": pick.get("display_artist", ""),
+                        "seconds": (pick.get("duration_in_ms") or 0) / 1000}
+        except Exception as e:
+            print(f"   ℹ️ could not download '{pick.get('title')}': {str(e)[:120]}")
+    print("   ℹ️ Instagram music: no usable track, using the built-in soundtrack")
+    return None
 
 
-def _container(token, uid, video_path, caption, thumb_ms, audio_cfg=None) -> str:
+def _container(token, uid, video_path, caption, thumb_ms) -> str:
     data = {"media_type": "REELS", "upload_type": "resumable", "caption": caption[:2200],
             "share_to_feed": "true", "thumb_offset": str(thumb_ms), "access_token": token}
-    if audio_cfg:
-        data["audio_configuration"] = json.dumps(audio_cfg)
     c = _check(requests.post(f"{_host(token)}/{uid}/media", data=data, timeout=60))
     cid = c["id"]
     uri = c.get("uri") or f"https://rupload.facebook.com/ig-api-upload/{VERSION}/{cid}"
@@ -124,28 +143,11 @@ def _container(token, uid, video_path, caption, thumb_ms, audio_cfg=None) -> str
     raise RuntimeError("Instagram processing timed out")
 
 
-def publish_reel(token, video_path, caption, thumb_ms=3000, handle="", music=None) -> dict:
-    """music = {"queries": [...], "video": path of the cut without built-in music, "duration": s,
-                "audio_volume": 1-100, "video_volume": 1-100}"""
+def publish_reel(token, video_path, caption, thumb_ms=3000, handle="") -> dict:
     me = account(token, handle)
     uid = me["user_id"]
     print(f"   📲 posting to @{me.get('username')}")
-
-    cid, used_music = None, None
-    if music and _fb(token):
-        track = find_music(token, uid, music["queries"], int(music["duration"] * 1000),
-                           music.get("prefer", ()), music.get("avoid", ()))
-        if track:
-            try:
-                cid = _container(token, uid, music["video"], caption, thumb_ms, {
-                    "audio_id": track["audio_id"], "audio_volume": music.get("audio_volume", 100),
-                    "video_volume": music.get("video_volume", 1)})
-                used_music = f"{track.get('title')} — {track.get('display_artist')}"
-            except Exception as e:
-                print(f"   ℹ️ Instagram music could not be attached ({str(e)[:200]}); using built-in soundtrack")
-    if cid is None:
-        cid = _container(token, uid, video_path, caption, thumb_ms)
-
+    cid = _container(token, uid, video_path, caption, thumb_ms)
     pub = _check(requests.post(f"{_host(token)}/{uid}/media_publish", timeout=60,
                                data={"creation_id": cid, "access_token": token}))
     link = ""
@@ -154,4 +156,4 @@ def publish_reel(token, video_path, caption, thumb_ms=3000, handle="", music=Non
                                    params={"fields": "permalink", "access_token": token})).get("permalink", "")
     except Exception:
         pass
-    return {"id": pub["id"], "permalink": link, "music": used_music}
+    return {"id": pub["id"], "permalink": link}

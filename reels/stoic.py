@@ -12,10 +12,10 @@ import random
 from PIL import Image, ImageDraw, ImageFilter
 
 import anim
-from audio import quiet_track, stoic_track
+from audio import stoic_track
 from common import H, W, clean_hashtags, download, font, gemini_json, load_used, mark_used, pixabay_search, plain
 from quotes import BACKDROPS, QUOTES
-from render import fit_lines, swap_audio
+from render import fit_lines, music_bed
 from thanglish import THANGLISH
 
 GOLD = (214, 178, 112)
@@ -89,7 +89,14 @@ def _base(handle):
     return base
 
 
-def build(handle, work, dry_run, variant=None):
+MUSIC = {"queries": ["calm piano", "peaceful", "ambient", "soothing", "meditation", "cinematic calm", "soft piano"],
+         "prefer": ["piano", "peace", "calm", "drift", "open air", "moon", "murmur", "reverie", "reflection",
+                    "breathe", "gratitude", "dream", "understory", "inspiro", "someday"],
+         "avoid": ["feat.", "lofi", "good day", "smile", "me gusta", "explore", "pizzicato", "barber", "mozart",
+                   "nerve", "om"]}
+
+
+def build(handle, work, dry_run, variant=None, music=None):
     used = load_used("stoic")
     variant = variant or os.environ.get("STOIC_VARIANT") or random.choice(["english", "thanglish"])
     if variant == "thanglish":
@@ -147,16 +154,11 @@ def build(handle, work, dry_run, variant=None):
 
     seed = random.randint(0, 10_000)
     out = os.path.join(work, "reel.mp4")
-    audio = stoic_track(os.path.join(work, "audio.wav"), duration, seed=seed)
+    if music:   # a calm track from Instagram's library, mixed into the file
+        audio = music_bed(music["path"], os.path.join(work, "audio.wav"), duration, music.get("seconds", 0))
+    else:       # built-in fallback
+        audio = stoic_track(os.path.join(work, "audio.wav"), duration, seed=seed)
     anim.render(clip_path, _base(handle), sprites, audio, out, duration, seed=seed)
-    # second cut with a near-silent bed, for when a soothing track from Instagram's library carries the music
-    quiet = swap_audio(out, quiet_track(os.path.join(work, "quiet.wav"), duration, seed), os.path.join(work, "reel_quiet.mp4"),
-                       normalise=False)
-    music = {"video": quiet, "duration": duration, "audio_volume": 100, "video_volume": 1,
-             "queries": ["calm piano", "peaceful", "ambient", "soothing", "meditation", "cinematic calm", "soft piano"],
-             "prefer": ["piano", "peace", "calm", "drift", "open air", "moon", "murmur", "reverie", "reflection",
-                        "breathe", "gratitude", "dream", "understory", "inspiro", "someday", "instrumental"],
-             "avoid": ["feat.", "lofi", "good day", "smile", "me gusta", "explore", "pizzicato", "barber"]}
 
     if variant == "thanglish":
         tags = clean_hashtags(text["hashtags"], ["Thanglish", "TamilQuotes", "TamilMotivation", "Tamil"] + (["Thirukkural"] if "Thirukkural" in source else []), 8)
@@ -171,6 +173,8 @@ def build(handle, work, dry_run, variant=None):
     if text["reflection"]:
         body += f"\n{text['reflection']}\n"
     body += ("\nSave this for the day you need it, and send it to someone who does.\n"
-             f"Follow {'@' + handle + ' ' if handle else ''}for {follow}.\n\n{' '.join(tags)}")
-    return {"video": out, "caption": body, "duration": duration, "thumb_ms": int((last_in + 0.6) * 1000), "music": music,
+             f"Follow {'@' + handle + ' ' if handle else ''}for {follow}.\n"
+             + (f"\n🎵 {music['title']} — {music['artist']}\n" if music and music.get("title") else "")
+             + f"\n{' '.join(tags)}")
+    return {"video": out, "caption": body, "duration": duration, "thumb_ms": int((last_in + 0.6) * 1000),
             "used": [clip["id"], key], "summary": f"[{variant}] {author or 'original'}: {quote} | meaning: {meaning}"}
