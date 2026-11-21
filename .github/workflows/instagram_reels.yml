@@ -1,18 +1,11 @@
 name: Instagram Reels
 
 # Two accounts, 2 Reels a day each. Posting times live in reels/slots.py.
-# Three triggers before each slot (80, 40 and 12 minutes ahead); see slots.py for why.
-# Kept light on purpose: the repo is private, so GitHub minutes are limited.
+# GitHub starts scheduled jobs late, so this wakes every hour; when a slot is near it renders the Reel,
+# waits, and publishes at the exact slot time. Most hourly runs finish in a few seconds with nothing to do.
 on:
   schedule:
-    - cron: '10,50 12 * * *'   # quiz 13:30
-    - cron: '18 13 * * *'
-    - cron: '10,50 22 * * *'   # quiz 23:30
-    - cron: '18 23 * * *'
-    - cron: '10,50 0 * * *'    # stoic 01:30
-    - cron: '18 1 * * *'
-    - cron: '40 14 * * *'      # stoic 16:00
-    - cron: '20,48 15 * * *'
+    - cron: '7 * * * *'
   workflow_dispatch:
     inputs:
       account:
@@ -25,49 +18,54 @@ on:
         type: boolean
         default: true
 
-concurrency:
-  group: instagram-reels
-  cancel-in-progress: false
-
 jobs:
   reel:
+    strategy:
+      fail-fast: false
+      matrix:
+        account: [quiz, stoic]
+    concurrency:
+      group: instagram-reels-${{ matrix.account }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 150
     permissions:
       contents: write
     env:
       PYTHONUNBUFFERED: '1'
+      ACCOUNT: ${{ matrix.account }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Is there anything to do?
         id: due
         env:
-          HAS_QUIZ: ${{ secrets.IG_TOKEN_QUIZ != '' }}
-          HAS_STOIC: ${{ secrets.IG_TOKEN_STOIC != '' }}
+          HAS_TOKEN: ${{ (matrix.account == 'quiz' && secrets.IG_TOKEN_QUIZ != '') || (matrix.account == 'stoic' && secrets.IG_TOKEN_STOIC != '') }}
           WANTED: ${{ inputs.account }}
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            python3 reels/slots.py quiz stoic | tee -a "$GITHUB_OUTPUT"
-          elif [ "$WANTED" = "both" ]; then
-            echo "accounts=quiz stoic" >> "$GITHUB_OUTPUT"
+            if [ "$HAS_TOKEN" != "true" ]; then echo "No Instagram token for $ACCOUNT yet."; echo "go=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+            python3 reels/slots.py "$ACCOUNT" | tee /tmp/due
+            if grep -q "due=2" /tmp/due; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; fi
+          elif [ "$WANTED" = "both" ] || [ "$WANTED" = "$ACCOUNT" ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
           else
-            echo "accounts=$WANTED" >> "$GITHUB_OUTPUT"
+            echo "go=false" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: actions/setup-python@v5
-        if: steps.due.outputs.accounts != ''
+        if: steps.due.outputs.go == 'true'
         with:
           python-version: '3.11'
           cache: pip
           cache-dependency-path: reels/requirements.txt
 
       - name: Install
-        if: steps.due.outputs.accounts != ''
+        if: steps.due.outputs.go == 'true'
         run: pip install -q -r reels/requirements.txt
 
       - name: Make and post Reel
-        if: steps.due.outputs.accounts != ''
+        if: steps.due.outputs.go == 'true'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
@@ -79,43 +77,36 @@ jobs:
           RUN_MODE: ${{ github.event_name == 'schedule' && 'schedule' || 'manual' }}
           DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
           OUT_DIR: reels_output
-        run: |
-          status=0
-          for a in ${{ steps.due.outputs.accounts }}; do
-            python reels/main.py "$a" || status=1
-          done
-          exit $status
+        run: python reels/main.py "$ACCOUNT"
 
       - name: Save Reel for review
-        if: always() && steps.due.outputs.accounts != ''
+        if: always() && steps.due.outputs.go == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: reels-${{ github.run_number }}
+          name: reel-${{ matrix.account }}-${{ github.run_number }}
           path: |
             reels_output/*.mp4
             reels_output/*.txt
-          retention-days: 3
+          retention-days: 7
           if-no-files-found: ignore
 
       - name: Keep the Instagram token fresh
-        if: always() && steps.due.outputs.accounts != ''
+        if: always() && steps.due.outputs.go == 'true'
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          for a in quiz stoic; do
-            f="reels_output/new_token_$a.secret"
-            if [ -s "$f" ]; then
-              if [ -n "$GH_TOKEN" ]; then
-                gh secret set "IG_TOKEN_$(echo "$a" | tr a-z A-Z)" -R "${{ github.repository }}" < "$f" && echo "Renewed token for $a"
-              else
-                echo "::warning::Add a GH_PAT secret so the $a Instagram token renews itself (otherwise it expires after 60 days)."
-              fi
-              rm -f "$f"
+          f="reels_output/new_token_$ACCOUNT.secret"
+          if [ -s "$f" ]; then
+            if [ -n "$GH_TOKEN" ]; then
+              gh secret set "IG_TOKEN_$(echo "$ACCOUNT" | tr a-z A-Z)" -R "${{ github.repository }}" < "$f" && echo "Renewed token for $ACCOUNT"
+            else
+              echo "::warning::Add a GH_PAT secret so the $ACCOUNT Instagram token renews itself (otherwise it expires after 60 days)."
             fi
-          done
+            rm -f "$f"
+          fi
 
       - name: Remember what was posted
-        if: always() && steps.due.outputs.accounts != ''
+        if: always() && steps.due.outputs.go == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
