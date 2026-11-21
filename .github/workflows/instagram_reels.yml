@@ -1,0 +1,117 @@
+name: Instagram Reels
+
+# Two accounts, 2 Reels a day each. Posting times live in reels/slots.py.
+# GitHub starts scheduled jobs late, so this wakes every hour; when a slot is near it renders the Reel,
+# waits, and publishes at the exact slot time. Most hourly runs finish in a few seconds with nothing to do.
+on:
+  schedule:
+    - cron: '7 * * * *'
+  workflow_dispatch:
+    inputs:
+      account:
+        description: 'Which account'
+        type: choice
+        options: [both, quiz, stoic]
+        default: both
+      dry_run:
+        description: 'Only render and save (do not post)'
+        type: boolean
+        default: true
+
+jobs:
+  reel:
+    strategy:
+      fail-fast: false
+      matrix:
+        account: [quiz, stoic]
+    concurrency:
+      group: instagram-reels-${{ matrix.account }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: write
+    env:
+      PYTHONUNBUFFERED: '1'
+      ACCOUNT: ${{ matrix.account }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Is there anything to do?
+        id: due
+        env:
+          HAS_TOKEN: ${{ (matrix.account == 'quiz' && secrets.IG_TOKEN_QUIZ != '') || (matrix.account == 'stoic' && secrets.IG_TOKEN_STOIC != '') }}
+          WANTED: ${{ inputs.account }}
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            if [ "$HAS_TOKEN" != "true" ]; then echo "No Instagram token for $ACCOUNT yet."; echo "go=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+            python3 reels/slots.py "$ACCOUNT" | tee /tmp/due
+            if grep -q "due=2" /tmp/due; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; fi
+          elif [ "$WANTED" = "both" ] || [ "$WANTED" = "$ACCOUNT" ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.due.outputs.go == 'true'
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: reels/requirements.txt
+
+      - name: Install
+        if: steps.due.outputs.go == 'true'
+        run: pip install -q -r reels/requirements.txt
+
+      - name: Make and post Reel
+        if: steps.due.outputs.go == 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          IG_TOKEN_QUIZ: ${{ secrets.IG_TOKEN_QUIZ }}
+          IG_TOKEN_STOIC: ${{ secrets.IG_TOKEN_STOIC }}
+          IG_HANDLE_QUIZ: ${{ vars.IG_HANDLE_QUIZ }}
+          IG_HANDLE_STOIC: ${{ vars.IG_HANDLE_STOIC }}
+          IG_MUSIC: ${{ vars.IG_MUSIC }}
+          RUN_MODE: ${{ github.event_name == 'schedule' && 'schedule' || 'manual' }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+          OUT_DIR: reels_output
+        run: python reels/main.py "$ACCOUNT"
+
+      - name: Save Reel for review
+        if: always() && steps.due.outputs.go == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: reel-${{ matrix.account }}-${{ github.run_number }}
+          path: |
+            reels_output/*.mp4
+            reels_output/*.txt
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Keep the Instagram token fresh
+        if: always() && steps.due.outputs.go == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          f="reels_output/new_token_$ACCOUNT.secret"
+          if [ -s "$f" ]; then
+            if [ -n "$GH_TOKEN" ]; then
+              gh secret set "IG_TOKEN_$(echo "$ACCOUNT" | tr a-z A-Z)" -R "${{ github.repository }}" < "$f" && echo "Renewed token for $ACCOUNT"
+            else
+              echo "::warning::Add a GH_PAT secret so the $ACCOUNT Instagram token renews itself (otherwise it expires after 60 days)."
+            fi
+            rm -f "$f"
+          fi
+
+      - name: Remember what was posted
+        if: always() && steps.due.outputs.go == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add reels/used_*.txt reels/posted_*.txt 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -q -m "chore: update reels trackers [skip ci]"
+            for i in 1 2 3 4; do git pull --rebase -q && git push -q && break; sleep 7; done
+          fi
