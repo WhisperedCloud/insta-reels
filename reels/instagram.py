@@ -1,8 +1,8 @@
 """Publish a Reel with the official Instagram API. Two connection types are supported, detected from the token:
 
-  Facebook Login  (token starts with "EAA")  Instagram account linked to a Facebook Page.
+  Facebook Login  (token starts with "EA")  Instagram account linked to a Facebook Page.
                   Needed for Instagram's own music library (Audio API). Page tokens do not expire.
-  Instagram Login (token starts with "IGA")  No Page needed, but no Instagram music; token lasts 60 days
+  Instagram Login (token starts with "IG")  No Page needed, but no Instagram music; token lasts 60 days
                   and is refreshed on every run.
 
 Flow: create a REELS container (resumable upload) -> send the file -> wait for processing -> publish.
@@ -20,7 +20,8 @@ VERSION = "v23.0"
 
 
 def _fb(token: str) -> bool:
-    return token.startswith("EAA")
+    """Facebook Login tokens start with "EA..."; Instagram Login tokens start with "IG...". """
+    return not token.startswith("IG")
 
 
 def _host(token: str) -> str:
