@@ -247,7 +247,9 @@ def build(handle: str, work: str, dry_run: bool):
     # second cut with only the countdown ticks + reveal chime, for when Instagram's music plays underneath
     sfx = swap_audio(out, quiz_track(p("sfx.wav"), DURATION, ticks, REVEAL, seed=seed, music_on=False), p("reel_sfx.mp4"))
     music = {"video": sfx, "duration": DURATION, "audio_volume": 70, "video_volume": 100,
-             "queries": ["feel good", "upbeat travel", "happy acoustic", "chill vibes", "summer"]}
+             "queries": ["feel good", "upbeat travel", "happy acoustic", "chill vibes", "summer"],
+             "prefer": ["good", "explore", "vibe", "sunny", "way to go", "fly", "enjoy", "little things", "best day"],
+             "avoid": ["piano", "peace", "om", "hymn"]}
 
     # generic tags only: a place hashtag would give the answer away in the caption
     tags = clean_hashtags([], ["GuessThePlace", "GeographyQuiz", "TravelQuiz", "Geography", "Travel", "Quiz", "WhereIsThis"], 7)

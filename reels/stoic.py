@@ -153,7 +153,10 @@ def build(handle, work, dry_run, variant=None):
     quiet = swap_audio(out, quiet_track(os.path.join(work, "quiet.wav"), duration, seed), os.path.join(work, "reel_quiet.mp4"),
                        normalise=False)
     music = {"video": quiet, "duration": duration, "audio_volume": 100, "video_volume": 1,
-             "queries": ["calm piano", "peaceful", "ambient", "soothing", "meditation", "cinematic calm", "soft piano"]}
+             "queries": ["calm piano", "peaceful", "ambient", "soothing", "meditation", "cinematic calm", "soft piano"],
+             "prefer": ["piano", "peace", "calm", "drift", "open air", "moon", "murmur", "reverie", "reflection",
+                        "breathe", "gratitude", "dream", "understory", "inspiro", "someday", "instrumental"],
+             "avoid": ["feat.", "lofi", "good day", "smile", "me gusta", "explore", "pizzicato", "barber"]}
 
     if variant == "thanglish":
         tags = clean_hashtags(text["hashtags"], ["Thanglish", "TamilQuotes", "TamilMotivation", "Tamil"] + (["Thirukkural"] if "Thirukkural" in source else []), 8)

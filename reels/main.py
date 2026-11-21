@@ -52,6 +52,9 @@ def main(acct: str) -> int:
             print(f"⏭️ No posting slot due for '{acct}'.")
             return 0
         print(f"🕒 Slot due: {slot[0]} UTC")
+    claimed = slot
+    if not scheduled and not dry:  # a post made by hand uses up the slot that is due, so it is not posted twice
+        claimed = slots.due_slot(acct)
 
     handle = os.environ.get(f"IG_HANDLE_{acct.upper()}", "").strip().lstrip("@")
     if token:
@@ -67,8 +70,8 @@ def main(acct: str) -> int:
         work = tempfile.mkdtemp(prefix=f"reel_{acct}_")
         try:
             kw = {}
-            if acct == "stoic" and slot:  # India-evening slot speaks Thanglish, US-evening slot English
-                kw["variant"] = slots.VARIANTS.get(slot[0][-5:])
+            if acct == "stoic" and claimed:  # India-evening slot speaks Thanglish, US-evening slot English
+                kw["variant"] = slots.VARIANTS.get(claimed[0][-5:])
             r = fmt.build(handle, work, dry, **kw)
             expected = r.get("duration", getattr(fmt, "DURATION", 12.0))
             ok, report = qc.check(r["video"], expected)
@@ -90,8 +93,8 @@ def main(acct: str) -> int:
             print(f"   ✅ Posted: {res.get('permalink') or res['id']}"
                   f"  (music: {res.get('music') or 'built-in soundtrack'})")
             mark_used(acct, *r["used"])
-            if slot:
-                slots.record(acct, slot[0], res.get("permalink", ""))
+            if claimed:
+                slots.record(acct, claimed[0], res.get("permalink", ""))
             new = instagram.refresh_token(token)
             if new and new != token:
                 with open(os.path.join(OUT_DIR, f"new_token_{acct}.secret"), "w") as f:

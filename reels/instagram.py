@@ -71,25 +71,35 @@ def refresh_token(token: str):
     return None
 
 
-def find_music(token: str, uid: str, queries, min_ms: int):
-    """A track from Instagram's licensed library matching one of `queries` and long enough for the Reel."""
+def find_music(token: str, uid: str, queries, min_ms: int, prefer=(), avoid=()):
+    """A track from Instagram's library (Meta's royalty-free Sound Collection is what the search returns)
+    matching one of `queries` and long enough for the Reel. Titles containing a `prefer` word are chosen
+    first; titles containing an `avoid` word are skipped."""
     if not _fb(token):
         return None
     qs = list(queries)
     random.shuffle(qs)
-    for q in qs[:3]:
+    pool, seen = [], set()
+    for q in qs[:4]:
         try:
-            data = _check(requests.get(f"{_host(token)}/ig_audio", timeout=30, params={
-                "audio_type": "music", "user_id": uid, "search_query": q, "access_token": token})).get("data", [])
+            r = _check(requests.get(f"{_host(token)}/ig_audio", timeout=30, params={
+                "audio_type": "music", "user_id": uid, "search_query": q, "access_token": token}))
         except Exception as e:
             print(f"   ℹ️ Instagram music search '{q}' failed: {str(e)[:200]}")
             return None  # not available for this app/account -> don't keep trying
-        ok = [a for a in data if a.get("audio_id") and (a.get("duration_in_ms") or 0) >= min_ms]
-        if ok:
-            pick = random.choice(ok[:8])
-            print(f"   🎵 Instagram music: {pick.get('title')} — {pick.get('display_artist')} (search '{q}')")
-            return pick
-    return None
+        for a in r.get("audio") or r.get("data") or []:  # the API answers with "audio", the docs say "data"
+            title = str(a.get("title", "")).lower()
+            if a.get("audio_id") and a["audio_id"] not in seen and (a.get("duration_in_ms") or 0) >= min_ms \
+                    and not any(w in title for w in avoid):
+                seen.add(a["audio_id"])
+                pool.append(a)
+    if not pool:
+        print("   ℹ️ Instagram music: no suitable track found")
+        return None
+    liked = [a for a in pool if any(w in str(a.get("title", "")).lower() for w in prefer)]
+    pick = random.choice(liked or pool)
+    print(f"   🎵 Instagram music: {pick.get('title')} — {pick.get('display_artist')}")
+    return pick
 
 
 def _container(token, uid, video_path, caption, thumb_ms, audio_cfg=None) -> str:
@@ -123,7 +133,8 @@ def publish_reel(token, video_path, caption, thumb_ms=3000, handle="", music=Non
 
     cid, used_music = None, None
     if music and _fb(token):
-        track = find_music(token, uid, music["queries"], int(music["duration"] * 1000))
+        track = find_music(token, uid, music["queries"], int(music["duration"] * 1000),
+                           music.get("prefer", ()), music.get("avoid", ()))
         if track:
             try:
                 cid = _container(token, uid, music["video"], caption, thumb_ms, {
