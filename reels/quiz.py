@@ -113,7 +113,9 @@ def quiz_text(answer: str, region: str) -> dict:
 Return JSON:
 - "distractors": 3 wrong answers in the same "City, Country" style, real places that genuinely look similar
   (same region, climate or architecture) so the quiz is tricky but fair. Max 24 characters each. Never "{answer}".
-- "fact": one surprising but well-known, verifiable fact about {answer}. Max 80 characters, no emoji.
+- "fact": one well-known, easily verifiable fact about {answer}. Max 80 characters, no emoji.
+  Prefer simple facts (what it is famous for, when it was built, a UNESCO listing). Avoid statistics,
+  percentages and "largest / oldest / only" claims unless they are textbook-certain.
 - "hook": a punchy first caption line inviting people to guess (max 70 characters, may end with one emoji).
   It must NOT name or hint at the city, country or continent. Plain text, no Markdown.
 Only state facts you are certain are true."""
@@ -133,6 +135,13 @@ Only state facts you are certain are true."""
     if not (10 <= len(fact) <= 95):
         fact = ""
     fact = plain(fact)
+    if fact:  # second opinion: a wrong fact on a quiz account costs more than no fact
+        v = gemini_json(f'''Fact-check this statement about {answer}: "{fact}"
+Return JSON {{"accurate": true/false, "reason": "short"}}. Answer true ONLY if you are certain it is correct
+exactly as written, including any numbers, dates and superlatives. If in doubt, answer false.''', temperature=0.0)
+        if not v or not v.get("accurate"):
+            print(f"   · fact dropped ({'not confirmed' if v else 'could not check'}): {fact}")
+            fact = ""
     hook = plain(g.get("hook", ""), 90)
     spoilers = [w.lower() for w in answer.replace(",", " ").split() if len(w) > 3]
     if not hook or any(w in hook.lower() for w in spoilers):
