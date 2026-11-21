@@ -1,9 +1,11 @@
 """Posting slots (UTC) and the 'is anything due?' check. Standard library only, so the workflow can
 run it before installing anything.
 
-GitHub starts scheduled workflows late (often by hours), and Instagram's API cannot schedule a post.
-So the workflow wakes up every hour; when a slot is coming up within LOOKAHEAD it renders the Reel,
-waits, and publishes at the exact slot time. A slot that was missed is still posted up to GRACE late.
+Instagram's API cannot schedule a post, and GitHub starts scheduled workflows late. The repo is private,
+so GitHub minutes are limited (2,000 free a month) and the job must not sit waiting for long. So the
+workflow is triggered three times before each slot (80, 40 and 12 minutes ahead). A run that starts
+within LOOKAHEAD of the slot renders the Reel, waits the few minutes left and posts on time; a run that
+starts after the slot posts straight away (up to GRACE late); a run that starts too early just exits.
 
 Slots are chosen for a global English audience (US + India are the two largest Reels audiences):
   quiz   13:30 UTC = 7:00 PM India / 8:30 AM US East      23:30 UTC = 6:30 PM US East / 3:30 PM US West
@@ -15,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 SLOTS = {"quiz": ["13:30", "23:30"], "stoic": ["01:30", "16:00"]}
 VARIANTS = {"01:30": "english", "16:00": "thanglish"}  # Stoic account: which slot posts which language
-LOOKAHEAD = timedelta(minutes=100)
+LOOKAHEAD = timedelta(minutes=15)
 GRACE = timedelta(hours=5)
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -55,5 +57,6 @@ def due_slot(acct, now=None):
 
 
 if __name__ == "__main__":
-    s = due_slot(sys.argv[1])
-    print(f"due={s[0] if s else ''}")
+    # prints e.g. "accounts=quiz" : accounts with a slot due now AND an Instagram token configured
+    due = [a for a in sys.argv[1:] if os.environ.get(f"HAS_{a.upper()}") == "true" and due_slot(a)]
+    print(f"accounts={' '.join(due)}")
