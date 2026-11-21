@@ -73,7 +73,7 @@ Do NOT change the line or its meaning. Return JSON (plain text only, no Markdown
 - "reflection": 2 short, practical sentences in simple English about using this idea today.
 - "hashtags": 5 relevant hashtags (no '#')."""
     g = gemini_json(prompt, temperature=0.9) or {}
-    return {"hook": plain(g.get("hook", ""), 90) or "Paati sonna vaarthai, innaikum unmai.",
+    return {"hook": plain(g.get("hook", ""), 90) or ("Paati sonna vaarthai, innaikum unmai." if source else "Indha line innaiku unakku thaan."),
             "reflection": plain(g.get("reflection", ""), 400), "hashtags": g.get("hashtags", [])}
 
 
@@ -156,7 +156,7 @@ def build(handle, work, dry_run, variant=None):
              "queries": ["calm piano", "peaceful", "ambient", "soothing", "meditation", "cinematic calm", "soft piano"]}
 
     if variant == "thanglish":
-        tags = clean_hashtags(text["hashtags"], ["Thanglish", "TamilQuotes", "TamilMotivation", "Tamil", "Thirukkural"], 8)
+        tags = clean_hashtags(text["hashtags"], ["Thanglish", "TamilQuotes", "TamilMotivation", "Tamil"] + (["Thirukkural"] if "Thirukkural" in source else []), 8)
         body = f"{text['hook']}\n\n“{quote}”\n" + (f"— {source}\n" if source else "") + f"\nMeaning: {meaning}\n"
         follow = "one Tamil thought every day"
     else:
