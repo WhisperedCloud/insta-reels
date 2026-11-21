@@ -10,11 +10,12 @@ Timeline (12 s, loops cleanly):
 """
 import os
 import random
+import subprocess
 
 from PIL import Image, ImageDraw
 
 from audio import quiz_track
-from common import H, W, clean_hashtags, download, font, gemini_json, load_used, pixabay_search, plain
+from common import FFMPEG, H, W, clean_hashtags, download, font, gemini_json, load_used, pixabay_search, plain
 from places import PLACES
 from render import canvas, compose, fit_lines, save, shadow_text, swap_audio
 
@@ -28,23 +29,80 @@ CELL_W = (WIN_W - GAP) // 2
 LETTERS = "ABCD"
 
 
-def pick_place(used: set):
-    """A place + a verified clip of it, skipping clips and (when possible) places used before."""
+def _other_place_tags(place):
+    """Tags that belong to a different place in the list. A clip carrying one of them is tagged with
+    several cities at once (or is really somewhere else), so it cannot be trusted as the answer."""
+    own = set(place[2]) | {w.strip().lower() for w in place[0].split(",")}
+    out = set()
+    for other in PLACES:
+        if other[0] != place[0]:
+            out |= set(other[2]) - {"pyramid"}         # the other place's own tags (minus generic words)
+            out.add(other[0].split(",")[0].lower())    # and its name
+    return {t for t in out if len(t) > 3 and t not in own and not any(t in o or o in t for o in own)}
+
+
+def candidates(used):
+    """(place, clip) pairs whose tags name this place and no other place, newest places first."""
     recent = [u[6:] for u in used if u.startswith("place:")][-40:]
     pool = [p for p in PLACES if p[0] not in recent] or PLACES[:]
     random.shuffle(pool)
-    for place in pool[:12]:
-        answer, query, tags, region = place
+    for place in pool[:14]:
+        answer, query, tags, _region = place
         try:
             clips = pixabay_search(query, must_tags=tags, min_seconds=8, exclude=used)
         except Exception as e:
             print(f"   ⚠️ Pixabay search failed for {query}: {e}")
             continue
-        if clips:
-            clip = random.choice(clips[:8])
-            print(f"   📍 {answer}  ←  Pixabay {clip['id']} ({clip['tags']})")
-            return place, clip
-        print(f"   · no verified clip for {answer}")
+        clash = _other_place_tags(place)
+        clean = [c for c in clips if not any(t in [x.strip() for x in c["tags"].split(",")] for t in clash)]
+        random.shuffle(clean)
+        if not clean:
+            print(f"   · no trustworthy clip for {answer}")
+        for clip in clean[:2]:
+            yield place, clip
+
+
+def looks_right(clip_path, answer, work):
+    """Ask Gemini to look at a frame: is this really (and recognisably) the place? None = could not check."""
+    frame = os.path.join(work, "check.jpg")
+    subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-nostdin", "-ss", "3", "-i", clip_path,
+                    "-frames:v", "1", "-vf", "scale=768:-2", frame], capture_output=True, timeout=120)
+    if not os.path.exists(frame):
+        return None
+    g = gemini_json(f"""This video frame is tagged as "{answer}" on a stock site and will be the answer in a
+"guess the place" quiz. Return JSON: {{"is_place": true/false, "recognisable": true/false, "reason": "short"}}
+- is_place: false if the frame clearly shows somewhere else or nothing place-specific (food, a person, an
+  interior, abstract, plain sky/water/forest). true if it plausibly is {answer}.
+- recognisable: true only if a traveller could reasonably identify {answer} from what is visible
+  (landmark, skyline, distinctive architecture or landscape).""", temperature=0.1, image_jpeg=open(frame, "rb").read())
+    if not g:
+        return None
+    ok = bool(g.get("is_place")) and bool(g.get("recognisable"))
+    print(f"   👁️ visual check for {answer}: {'OK' if ok else 'rejected'} ({str(g.get('reason', ''))[:90]})")
+    return ok
+
+
+def pick_place(used, work):
+    """A place plus a clip of it that passed the tag rules and, when Gemini is reachable, a visual check."""
+    unchecked = None
+    for n, (place, clip) in enumerate(candidates(used)):
+        if n >= 8:
+            break
+        path = os.path.join(work, f"clip{n}.mp4")
+        try:
+            download(clip["url"], path)
+        except Exception as e:
+            print(f"   ⚠️ {e}")
+            continue
+        verdict = looks_right(path, place[0], work)
+        if verdict:
+            print(f"   📍 {place[0]}  ←  Pixabay {clip['id']} ({clip['tags'][:120]})")
+            return place, clip, path
+        if verdict is None and unchecked is None:
+            unchecked = (place, clip, path)
+    if unchecked:  # Gemini was down for every candidate: fall back to the tag-verified clip
+        print(f"   📍 {unchecked[0][0]}  ←  Pixabay {unchecked[1]['id']} (tags only, visual check unavailable)")
+        return unchecked
     raise RuntimeError("No verified footage found for any place")
 
 
@@ -110,13 +168,12 @@ def _grid(img, options, correct=None):
 
 def build(handle: str, work: str, dry_run: bool):
     used = load_used("quiz")
-    (answer, _q, _t, region), clip = pick_place(used)
+    (answer, _q, _t, region), clip, clip_path = pick_place(used, work)
     text = quiz_text(answer, region)
     options = text["distractors"] + [answer]
     random.shuffle(options)
     correct = options.index(answer)
 
-    clip_path = download(clip["url"], os.path.join(work, "clip.mp4"))
     p = lambda n: os.path.join(work, n)
     win_r, win_b = WIN_X + WIN_W, WIN_Y + WIN_H
 

@@ -99,17 +99,28 @@ def pixabay_search(query: str, must_tags=(), min_seconds: float = 8, exclude=())
 
 
 def download(url: str, path: str) -> str:
-    with requests.get(url, stream=True, timeout=120) as r:
-        r.raise_for_status()
-        with open(path, "wb") as f:
-            for chunk in r.iter_content(1 << 20):
-                f.write(chunk)
-    return path
+    """Download with retries: Pixabay's CDN answers 429 when asked too quickly."""
+    last = None
+    for attempt in range(4):
+        try:
+            with requests.get(url, stream=True, timeout=120, headers={"User-Agent": "Mozilla/5.0 (reels-bot)"}) as r:
+                if r.status_code == 429:
+                    raise RuntimeError("429 Too Many Requests")
+                r.raise_for_status()
+                with open(path, "wb") as f:
+                    for chunk in r.iter_content(1 << 20):
+                        f.write(chunk)
+            return path
+        except Exception as e:
+            last = e
+            time.sleep(20 * (attempt + 1))
+    raise RuntimeError(f"download failed: {last}")
 
 
 # ── Gemini ──────────────────────────────────────────────────────────────────
-def gemini_json(prompt: str, temperature: float = 0.8):
-    """Return parsed JSON from Gemini, or None if unavailable (callers always have a fallback)."""
+def gemini_json(prompt: str, temperature: float = 0.8, image_jpeg: bytes = None):
+    """Return a JSON object from Gemini (optionally about an image), or None if unavailable.
+    Callers always have a fallback."""
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
         print("   ⚠️ GEMINI_API_KEY missing, using fallback text")
@@ -118,16 +129,22 @@ def gemini_json(prompt: str, temperature: float = 0.8):
     from google.genai import types
     client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=40_000))
     cfg = types.GenerateContentConfig(response_mime_type="application/json", temperature=temperature)
-    for model in ("gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-2.5-flash-lite"):
-        for attempt in range(2):
+    contents = [types.Part.from_bytes(data=image_jpeg, mime_type="image/jpeg"), prompt] if image_jpeg else prompt
+    for model in ("gemini-flash-lite-latest", "gemini-flash-latest"):
+        for attempt in range(3):
             try:
-                raw = (client.models.generate_content(model=model, contents=prompt, config=cfg).text or "").strip()
-                return json.loads(re.sub(r"^```(?:json)?|```$", "", raw).strip())
+                raw = (client.models.generate_content(model=model, contents=contents, config=cfg).text or "").strip()
+                data = json.loads(re.sub(r"^```(?:json)?|```$", "", raw).strip())
+                if isinstance(data, list):  # sometimes wrapped in a one-item list
+                    data = next((d for d in data if isinstance(d, dict)), None)
+                if isinstance(data, dict):
+                    return data
+                raise ValueError("not a JSON object")
             except Exception as e:
-                print(f"   ⚠️ Gemini {model} attempt {attempt + 1}: {str(e)[:140]}")
+                print(f"   ⚠️ Gemini {model} attempt {attempt + 1}: {str(e)[:120]}")
                 if "NOT_FOUND" in str(e):
                     break
-                time.sleep(4 * (attempt + 1))
+                time.sleep(6 * (attempt + 1))
     return None
 
 

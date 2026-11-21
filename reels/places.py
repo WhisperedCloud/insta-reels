@@ -14,7 +14,7 @@ PLACES = [
     ("Barcelona, Spain", "barcelona", ["barcelona"], "europe"),
     ("Lisbon, Portugal", "lisbon", ["lisbon", "lisboa"], "europe"),
     ("Budapest, Hungary", "budapest", ["budapest"], "europe"),
-    ("Hallstatt, Austria", "hallstatt", ["hallstatt"], "europe"),
+    ("Hallstatt, Austria", "hallstatt", ["hallstatt", "halstatt"], "europe"),
     ("Vienna, Austria", "vienna", ["vienna", "wien"], "europe"),
     ("Zermatt, Switzerland", "matterhorn", ["matterhorn", "zermatt"], "europe"),
     ("Lake Como, Italy", "lake como", ["como"], "europe"),
