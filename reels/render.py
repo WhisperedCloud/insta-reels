@@ -59,29 +59,47 @@ def save(img, path):
     return path
 
 
-def prepare_clip(clip, out, duration):
-    """Cut the source down to a clean 1080x1920, 30 fps, silent clip of exactly `duration` seconds
+def prepare_clip(clip, out, duration, size=(W, H)):
+    """Cut the source down to a clean `size`, 30 fps, silent clip of exactly `duration` seconds
     (looping it if it is shorter). Doing this first keeps the final composite fast on CI."""
+    w, h = size
     have = media_duration(clip)
     loops = max(0, math.ceil(duration / have) - 1) if have > 0 else 0
     pre = ["-stream_loop", str(loops)] if loops else []
     ff([*pre, "-t", f"{duration + 0.5:.2f}", "-i", clip, "-an",
-        "-vf", f"fps={FPS},scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{H},setsar=1",
+        "-vf", f"fps={FPS},scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,crop={w}:{h},setsar=1",
         "-t", f"{duration:.2f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "14", "-pix_fmt", "yuv420p", out])
     return out
 
 
-def compose(clip, overlays, audio, out, duration, grade=""):
+def compose(clip, overlays, audio, out, duration, grade="", window=None):
     """Prepared clip + colour grade, then PNG overlays (each with its own start/end/fade), mixed with
-    `audio` loudness-normalised to -14 LUFS (Instagram's playback target)."""
-    prepared = prepare_clip(clip, clip + ".prep.mp4", duration)
-    inputs = ["-i", prepared]
+    `audio` loudness-normalised to -14 LUFS (Instagram's playback target).
+
+    window=(x, y, w, h, mask_png): the footage plays un-cropped-as-possible inside that rounded window,
+    over a blurred, darkened copy of itself, so nothing ever sits on top of the subject."""
+    if window:
+        x, y, w, h, mask = window
+        prepared = prepare_clip(clip, clip + ".prep.mp4", duration, (w, h))
+        inputs = ["-i", prepared, "-loop", "1", "-framerate", str(FPS), "-t", f"{duration:.2f}", "-i", mask]
+        first = 2
+        chain = [f"[0:v]split[b0][f0]",
+                 f"[b0]scale={W}:{H}:force_original_aspect_ratio=increase:flags=bilinear,crop={W}:{H},"
+                 f"boxblur=26:3,eq=brightness=-0.20:saturation=1.15,setsar=1[bg]",
+                 f"[f0]{grade + ',' if grade else ''}format=rgba[f1]",
+                 f"[1:v]format=gray,scale={w}:{h}[m]",
+                 f"[f1][m]alphamerge[fg]",
+                 f"[bg][fg]overlay={x}:{y}:shortest=1,format=yuv420p,setpts=PTS-STARTPTS[v0]"]
+    else:
+        prepared = prepare_clip(clip, clip + ".prep.mp4", duration)
+        inputs = ["-i", prepared]
+        first = 1
+        chain = [f"[0:v]{grade + ',' if grade else ''}format=yuv420p,setpts=PTS-STARTPTS[v0]"]
     for o in overlays:
         inputs += ["-loop", "1", "-framerate", str(FPS), "-t", f"{duration:.2f}", "-i", o["png"]]
     inputs += ["-i", audio]
-    chain = [f"[0:v]{grade + ',' if grade else ''}format=yuv420p,setpts=PTS-STARTPTS[v0]"]
     last = "v0"
-    for i, o in enumerate(overlays, start=1):
+    for i, o in enumerate(overlays, start=first):
         start, end, fade = o.get("start", 0.0), o.get("end", duration), o.get("fade", 0.0)
         f = f"[{i}:v]format=rgba"
         if fade:
@@ -89,7 +107,7 @@ def compose(clip, overlays, audio, out, duration, grade=""):
         chain.append(f + f"[o{i}]")
         chain.append(f"[{last}][o{i}]overlay=0:0:enable='between(t,{start:.2f},{end:.2f})'[v{i}]")
         last = f"v{i}"
-    a = len(overlays) + 1
+    a = len(overlays) + first
     chain.append(f"[{a}:a]atrim=duration={duration:.2f},afade=t=in:st=0:d=0.15,"
                  f"afade=t=out:st={duration - 0.5:.2f}:d=0.5,loudnorm=I=-14:TP=-1.5:LRA=11,aresample=44100[a]")
     ff([*inputs, "-filter_complex", ";".join(chain), "-map", f"[{last}]", "-map", "[a]",

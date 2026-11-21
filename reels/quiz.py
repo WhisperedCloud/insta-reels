@@ -1,5 +1,8 @@
 """Account A: "Guess the Place" quiz Reels.
 
+Layout: the footage plays in its own clear window (nothing covers the place), over a blurred copy of
+itself; the question sits above the window and the four answers in a 2x2 grid below it.
+
 Timeline (12 s, loops cleanly):
   0.0  footage + "Where is this?" + 4 options (hook is on screen from the first frame)
   1.5  5-second countdown with ticks
@@ -8,18 +11,20 @@ Timeline (12 s, loops cleanly):
 import os
 import random
 
-from PIL import ImageDraw
+from PIL import Image, ImageDraw
 
 from audio import quiz_track
 from common import H, W, clean_hashtags, download, font, gemini_json, load_used, pixabay_search, plain
 from places import PLACES
-from render import canvas, compose, fit_lines, gradient, save, shadow_text, swap_audio
+from render import canvas, compose, fit_lines, save, shadow_text, swap_audio
 
 DURATION = 12.0
 COUNT_START, REVEAL = 1.5, 6.5
 ACCENT = (255, 196, 61)
 GREEN = (34, 197, 94)
-ROW_X0, ROW_X1, ROW_Y0, ROW_H, ROW_GAP = 70, 930, 1010, 104, 22
+WIN_X, WIN_Y, WIN_W, WIN_H = 40, 410, 1000, 880      # footage window
+GRID_Y, CELL_H, GAP = 1322, 100, 16                   # answers: 2 x 2 below the window
+CELL_W = (WIN_W - GAP) // 2
 LETTERS = "ABCD"
 
 
@@ -83,24 +88,24 @@ def _pill(d, cx, y, text, fnt, bg, fg):
     d.text((cx, y + 32), text, font=fnt, fill=fg, anchor="mm")
 
 
-def _rows(img, options, correct=None):
+def _grid(img, options, correct=None):
     d = ImageDraw.Draw(img)
     for i, opt in enumerate(options):
-        y = ROW_Y0 + i * (ROW_H + ROW_GAP)
+        x = WIN_X + (i % 2) * (CELL_W + GAP)
+        y = GRID_Y + (i // 2) * (CELL_H + GAP)
         is_right = correct is not None and i == correct
         dim = correct is not None and not is_right
-        bg = GREEN + (245,) if is_right else (255, 255, 255, 110 if dim else 218)
+        bg = GREEN + (255,) if is_right else (255, 255, 255, 95 if dim else 240)
         fg = (255, 255, 255) if is_right else (20, 24, 38)
-        d.rounded_rectangle((ROW_X0 + 4, y + 6, ROW_X1 + 4, y + ROW_H + 6), radius=28, fill=(0, 0, 0, 70))
-        d.rounded_rectangle((ROW_X0, y, ROW_X1, y + ROW_H), radius=28, fill=bg)
-        cx, cy = ROW_X0 + 62, y + ROW_H / 2
-        d.ellipse((cx - 32, cy - 32, cx + 32, cy + 32), fill=(255, 255, 255) if is_right else (20, 24, 38))
+        d.rounded_rectangle((x, y, x + CELL_W, y + CELL_H), radius=26, fill=bg)
+        cx, cy = x + 52, y + CELL_H / 2
+        d.ellipse((cx - 30, cy - 30, cx + 30, cy + 30), fill=(255, 255, 255) if is_right else (20, 24, 38))
         if is_right:
-            d.line([(cx - 15, cy + 1), (cx - 4, cy + 13), (cx + 17, cy - 12)], fill=GREEN, width=9, joint="curve")
+            d.line([(cx - 14, cy + 1), (cx - 4, cy + 12), (cx + 16, cy - 11)], fill=GREEN, width=8, joint="curve")
         else:
-            d.text((cx, cy), LETTERS[i], font=font("sans", 36, "ExtraBold"), fill=(255, 255, 255), anchor="mm")
-        f, lines = fit_lines(d, opt, lambda s: font("sans", s, "Bold"), ROW_X1 - ROW_X0 - 150, 1, 46, 30)
-        d.text((ROW_X0 + 118, cy), lines[0], font=f, fill=fg, anchor="lm")
+            d.text((cx, cy), LETTERS[i], font=font("sans", 34, "ExtraBold"), fill=(255, 255, 255), anchor="mm")
+        f, lines = fit_lines(d, opt, lambda s: font("sans", s, "Bold"), CELL_W - 112, 1, 38, 24)
+        d.text((x + 96, cy), lines[0], font=f, fill=fg, anchor="lm")
 
 
 def build(handle: str, work: str, dry_run: bool):
@@ -113,48 +118,53 @@ def build(handle: str, work: str, dry_run: bool):
 
     clip_path = download(clip["url"], os.path.join(work, "clip.mp4"))
     p = lambda n: os.path.join(work, n)
+    win_r, win_b = WIN_X + WIN_W, WIN_Y + WIN_H
 
-    base = gradient(0, 760, 190, 0)
-    base.alpha_composite(gradient(880, H, 0, 215))
+    mask = Image.new("L", (WIN_W, WIN_H), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, WIN_W - 1, WIN_H - 1), radius=44, fill=255)
+    mask.save(p("mask.png"))
+
+    base = canvas()
     d = ImageDraw.Draw(base)
-    _pill(d, W / 2, 150, "GUESS THE PLACE", font("sans", 32, "ExtraBold"), ACCENT + (255,), (20, 24, 38))
+    _pill(d, W / 2, 168, "GUESS THE PLACE", font("sans", 32, "ExtraBold"), ACCENT + (255,), (20, 24, 38))
+    d.rounded_rectangle((WIN_X, WIN_Y, win_r, win_b), radius=44, outline=(255, 255, 255, 235), width=5)
     if handle:
-        d.text((W / 2, 1530), f"@{handle}", font=font("sans", 30, "SemiBold"), fill=(255, 255, 255, 170), anchor="mm")
+        hf = font("sans", 28, "Bold")
+        hw = d.textlength(f"@{handle}", font=hf) + 36
+        d.rounded_rectangle((WIN_X + 22, WIN_Y + 22, WIN_X + 22 + hw, WIN_Y + 72), radius=25, fill=(15, 18, 30, 150))
+        d.text((WIN_X + 22 + hw / 2, WIN_Y + 47), f"@{handle}", font=hf, fill=(255, 255, 255, 235), anchor="mm")
 
     q = canvas()
-    shadow_text(q, (W / 2, 300), "Where is this?", font("sans", 112, "ExtraBold"), (255, 255, 255))
-    shadow_text(q, (W / 2, 410), "Answer before the timer hits 0", font("sans", 42, "SemiBold"), (255, 255, 255, 235))
+    shadow_text(q, (W / 2, 296), "Where is this?", font("sans", 104, "ExtraBold"), (255, 255, 255))
+    shadow_text(q, (W / 2, 374), "Answer before the timer hits 0", font("sans", 36, "SemiBold"), (255, 255, 255, 235))
 
     opts = canvas()
-    _rows(opts, options)
+    _grid(opts, options)
 
     counts = []
     for k, n in enumerate(range(5, 0, -1)):
         c = canvas()
         cd = ImageDraw.Draw(c)
-        cx, cy, r = W / 2, 590, 78
-        cd.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(20, 24, 38, 215), outline=ACCENT + (255,), width=8)
-        cd.arc((cx - r, cy - r, cx + r, cy + r), -90, -90 + 360 * n / 5, fill=ACCENT + (255,), width=14)
-        cd.text((cx, cy + 2), str(n), font=font("sans", 92, "ExtraBold"), fill=(255, 255, 255), anchor="mm")
+        r = 62
+        cx, cy = win_r - 28 - r, WIN_Y + 28 + r  # top-right corner of the window
+        cd.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(20, 24, 38, 225), outline=(255, 255, 255, 60), width=6)
+        cd.arc((cx - r, cy - r, cx + r, cy + r), -90, -90 + 360 * n / 5, fill=ACCENT + (255,), width=11)
+        cd.text((cx, cy + 2), str(n), font=font("sans", 72, "ExtraBold"), fill=(255, 255, 255), anchor="mm")
         counts.append({"png": save(c, p(f"count{n}.png")), "start": COUNT_START + k, "end": COUNT_START + k + 1})
 
     rv = canvas()
-    _rows(rv, options, correct)
-    city = answer.split(",")[0]
+    _grid(rv, options, correct)
     rd = ImageDraw.Draw(rv)
-    f, lines = fit_lines(rd, f"It's {city}!", lambda s: font("sans", s, "ExtraBold"), 940, 1, 112, 64)
-    shadow_text(rv, (W / 2, 300), lines[0], f, (255, 255, 255))
-    if "," in answer:
-        shadow_text(rv, (W / 2, 400), answer.split(",", 1)[1].strip(), font("sans", 50, "Bold"), ACCENT + (255,))
-    if text["fact"]:
-        ff_, flines = fit_lines(rd, text["fact"], lambda s: font("sans", s, "SemiBold"), 900, 3, 44, 34)
-        y = 520
-        box_h = len(flines) * (ff_.size + 14) + 50
-        rd.rounded_rectangle((70, y, W - 70, y + box_h), radius=30, fill=(15, 18, 30, 205))
+    f, lines = fit_lines(rd, f"It's {answer}!", lambda s: font("sans", s, "ExtraBold"), 1000, 1, 104, 52)
+    shadow_text(rv, (W / 2, 296), lines[0], f, (255, 255, 255))
+    shadow_text(rv, (W / 2, 374), "Did you get it? Comment your answer", font("sans", 36, "Bold"), ACCENT + (255,))
+    if text["fact"]:  # a slim band along the bottom edge of the window, only after the reveal
+        ff_, flines = fit_lines(rd, text["fact"], lambda s: font("sans", s, "SemiBold"), WIN_W - 110, 2, 38, 28)
+        box_h = len(flines) * (ff_.size + 12) + 36
+        y = win_b - 24 - box_h
+        rd.rounded_rectangle((WIN_X + 24, y, win_r - 24, y + box_h), radius=26, fill=(15, 18, 30, 215))
         for i, line in enumerate(flines):
-            rd.text((W / 2, y + 25 + (ff_.size + 14) * i + ff_.size / 2), line, font=ff_, fill=(255, 255, 255), anchor="mm")
-    shadow_text(rv, ((ROW_X0 + ROW_X1) / 2, ROW_Y0 - 58), "Did you get it? Comment your answer", font("sans", 38, "Bold"),
-                (255, 255, 255))
+            rd.text((W / 2, y + 18 + (ff_.size + 12) * i + ff_.size / 2), line, font=ff_, fill=(255, 255, 255), anchor="mm")
 
     overlays = [
         {"png": save(base, p("base.png"))},
@@ -166,7 +176,8 @@ def build(handle: str, work: str, dry_run: bool):
     ticks = [COUNT_START + k for k in range(5)]
     seed = random.randint(0, 10_000)
     audio = quiz_track(p("audio.wav"), DURATION, ticks, REVEAL, seed=seed)
-    out = compose(clip_path, overlays, audio, p("reel.mp4"), DURATION, grade="eq=saturation=1.12:contrast=1.04")
+    out = compose(clip_path, overlays, audio, p("reel.mp4"), DURATION, grade="eq=saturation=1.12:contrast=1.04",
+                  window=(WIN_X, WIN_Y, WIN_W, WIN_H, p("mask.png")))
     # second cut with only the countdown ticks + reveal chime, for when Instagram's music plays underneath
     sfx = swap_audio(out, quiz_track(p("sfx.wav"), DURATION, ticks, REVEAL, seed=seed, music_on=False), p("reel_sfx.mp4"))
     music = {"video": sfx, "duration": DURATION, "audio_volume": 70, "video_volume": 100,
