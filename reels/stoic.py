@@ -98,14 +98,19 @@ MUSIC = {"queries": ["calm piano", "peaceful", "ambient", "soothing", "meditatio
 
 def build(handle, work, dry_run, variant=None, music=None):
     used = load_used("stoic")
-    variant = variant or os.environ.get("STOIC_VARIANT") or random.choice(["english", "thanglish"])
+    pick = (os.environ.get("STOIC_PICK") or "").strip().lower()   # manual runs: force one specific line
+    forced = next((("thanglish", t) for t in THANGLISH if pick and pick in t[0].lower()), None) \
+        or next((("english", q) for q in QUOTES if pick and pick in q[0].lower()), None)
+    if pick and not forced:
+        raise RuntimeError(f"No line contains '{pick}'")
+    variant = forced[0] if forced else (variant or os.environ.get("STOIC_VARIANT") or random.choice(["english", "thanglish"]))
     if variant == "thanglish":
-        quote, source, meaning = _pick(THANGLISH, used, "tq:")
+        quote, source, meaning = forced[1] if forced else _pick(THANGLISH, used, "tq:")
         author, label = source, "MEANING"
         text = thanglish_text(quote, source, meaning)
         key = f"tq:{quote[:60]}"
     else:
-        quote, author, source = _pick(QUOTES, used, "q:")
+        quote, author, source = forced[1] if forced else _pick(QUOTES, used, "q:")
         text = english_text(quote, author)
         meaning, label = text["meaning"], "TODAY, THIS MEANS"
         key = f"q:{quote[:60]}"

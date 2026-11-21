@@ -17,6 +17,10 @@ on:
         description: 'Only render and save (do not post)'
         type: boolean
         default: true
+      stoic_line:
+        description: 'Stoic only: post the line containing this text (leave empty for the next unused line)'
+        type: string
+        default: ''
 
 jobs:
   reel:
@@ -74,6 +78,7 @@ jobs:
           IG_HANDLE_QUIZ: ${{ vars.IG_HANDLE_QUIZ }}
           IG_HANDLE_STOIC: ${{ vars.IG_HANDLE_STOIC }}
           IG_MUSIC: ${{ vars.IG_MUSIC }}
+          STOIC_PICK: ${{ inputs.stoic_line }}
           RUN_MODE: ${{ github.event_name == 'schedule' && 'schedule' || 'manual' }}
           DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
           OUT_DIR: reels_output
