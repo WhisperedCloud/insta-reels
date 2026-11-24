@@ -1,9 +1,10 @@
 """Posting slots (UTC) and the 'is anything due?' check. Standard library only, so the workflow can
 run it before installing anything.
 
-GitHub starts scheduled workflows late (often by hours), and Instagram's API cannot schedule a post.
-So the workflow wakes up every hour; when a slot is coming up within LOOKAHEAD it renders the Reel,
-waits, and publishes at the exact slot time. A slot that was missed is still posted up to GRACE late.
+GitHub starts scheduled workflows late and only a few times a day, and Instagram's API cannot schedule a
+post. So an outside timer (cron-job.org) calls the workflow every 30 minutes, in any time zone; when a slot
+is coming up within LOOKAHEAD the run renders the Reel, waits, and publishes at the slot time. A slot that
+was missed is still posted up to GRACE late.
 
 Slots are chosen for a global English audience (US + India are the two largest Reels audiences):
   quiz   13:30 UTC = 7:00 PM India / 8:30 AM US East      23:30 UTC = 6:30 PM US East / 3:30 PM US West
@@ -15,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 SLOTS = {"quiz": ["13:30", "23:30"], "stoic": ["01:30", "16:00"]}
 VARIANTS = {"01:30": "english", "16:00": "thanglish"}  # Stoic account: which slot posts which language
-LOOKAHEAD = timedelta(minutes=100)
+LOOKAHEAD = timedelta(minutes=40)  # a little over the timer's 30 minutes: one call always lands before the slot
 GRACE = timedelta(hours=5)
 HERE = os.path.dirname(os.path.abspath(__file__))
 
