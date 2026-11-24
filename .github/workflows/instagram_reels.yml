@@ -1,8 +1,9 @@
 name: Instagram Reels
 
 # Two accounts, 2 Reels a day each. Posting times live in reels/slots.py.
-# GitHub starts scheduled jobs late, so this wakes every hour; when a slot is near it renders the Reel,
-# waits, and publishes at the exact slot time. Most hourly runs finish in a few seconds with nothing to do.
+# GitHub's own schedule is only a backup: it fires a few times a day instead of hourly. An outside timer
+# (cron-job.org) starts the "scheduled" run shortly before each slot; it renders the Reel, waits, and
+# publishes at the slot time. Runs with nothing due finish in a few seconds.
 on:
   schedule:
     - cron: '7 * * * *'
@@ -17,6 +18,10 @@ on:
         description: 'Only render and save (do not post)'
         type: boolean
         default: true
+      scheduled:
+        description: 'Used by the timer: only act if a posting slot is due (set dry run to false)'
+        type: boolean
+        default: false
       stoic_line:
         description: 'Stoic only: post the line containing this text (leave empty for the next unused line)'
         type: string
@@ -40,14 +45,19 @@ jobs:
       ACCOUNT: ${{ matrix.account }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # latest commit, not the one from when the run was queued: a run that waited behind another one
+          # must see what that one just posted, or the same slot would be posted twice
+          ref: ${{ github.ref_name }}
 
       - name: Is there anything to do?
         id: due
         env:
           HAS_TOKEN: ${{ (matrix.account == 'quiz' && secrets.IG_TOKEN_QUIZ != '') || (matrix.account == 'stoic' && secrets.IG_TOKEN_STOIC != '') }}
           WANTED: ${{ inputs.account }}
+          BY_SLOT: ${{ github.event_name == 'schedule' || inputs.scheduled }}
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
+          if [ "$BY_SLOT" = "true" ]; then
             if [ "$HAS_TOKEN" != "true" ]; then echo "No Instagram token for $ACCOUNT yet."; echo "go=false" >> "$GITHUB_OUTPUT"; exit 0; fi
             python3 reels/slots.py "$ACCOUNT" | tee /tmp/due
             if grep -q "due=2" /tmp/due; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; fi
@@ -79,7 +89,7 @@ jobs:
           IG_HANDLE_STOIC: ${{ vars.IG_HANDLE_STOIC }}
           IG_MUSIC: ${{ vars.IG_MUSIC }}
           STOIC_PICK: ${{ inputs.stoic_line }}
-          RUN_MODE: ${{ github.event_name == 'schedule' && 'schedule' || 'manual' }}
+          RUN_MODE: ${{ (github.event_name == 'schedule' || inputs.scheduled) && 'schedule' || 'manual' }}
           DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
           OUT_DIR: reels_output
         run: python reels/main.py "$ACCOUNT"

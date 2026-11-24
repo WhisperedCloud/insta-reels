@@ -8,8 +8,9 @@ Two faceless Instagram accounts, 2 Reels a day each, made and posted for free by
 | `quiz` | Guess the Place: footage of a famous place, 4 options, 5 s countdown, reveal + fact | 13:30 and 23:30 (7 PM India, 6:30 PM US East) |
 | `stoic` | Animated quote Reels: English Stoic quotes at 01:30, Thanglish lines (Kural, proverbs, originals) at 16:00 | 01:30 and 16:00 (8:30 PM US East, 9:30 PM India) |
 
-The workflow wakes every hour. When a slot in `reels/slots.py` is near, it renders the Reel, waits, and
-publishes at the exact slot time (GitHub starts scheduled jobs late, and Instagram cannot schedule posts).
+A timer on cron-job.org starts the workflow shortly before each slot in `reels/slots.py`; the run renders the
+Reel, waits, and publishes at the slot time. GitHub's own hourly schedule stays on as a backup only, because
+it really fires a few times a day. A slot is posted at most once, however many times it is triggered.
 
 Content sources: Pixabay footage (Pixabay Content License, free for commercial use, no credit needed), music
 synthesised by `audio.py` (original), OFL fonts, quotes from ancient authors in a hand-checked list.
