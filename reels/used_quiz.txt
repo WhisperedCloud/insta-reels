@@ -4,3 +4,5 @@ px172545
 place:Great Wall, China
 px31780
 place:Bangkok, Thailand
+px246842
+place:Hong Kong
