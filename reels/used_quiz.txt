@@ -8,3 +8,5 @@ px246842
 place:Hong Kong
 px205184
 place:Lisbon, Portugal
+px279955
+place:Kuala Lumpur, Malaysia
