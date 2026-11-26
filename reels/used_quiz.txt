@@ -10,3 +10,5 @@ px205184
 place:Lisbon, Portugal
 px279955
 place:Kuala Lumpur, Malaysia
+px178488
+place:Mount Fuji, Japan
