@@ -12,3 +12,5 @@ px279955
 place:Kuala Lumpur, Malaysia
 px178488
 place:Mount Fuji, Japan
+px50593
+place:Bali, Indonesia
