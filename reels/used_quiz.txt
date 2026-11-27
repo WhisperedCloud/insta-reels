@@ -14,3 +14,5 @@ px178488
 place:Mount Fuji, Japan
 px50593
 place:Bali, Indonesia
+px346723
+place:Varanasi, India
