@@ -16,3 +16,5 @@ px50593
 place:Bali, Indonesia
 px346723
 place:Varanasi, India
+px181377
+place:Hallstatt, Austria
